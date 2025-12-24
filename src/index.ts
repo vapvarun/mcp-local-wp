@@ -9,6 +9,13 @@ import {
 import { config } from 'dotenv';
 import { MySQLClient } from './mysql-client.js';
 import { getLocalMySQLConfig } from './local-detector.js';
+import {
+  executeWpCli,
+  createPost,
+  updatePost,
+  deletePost,
+  addMenuItem,
+} from './wp-cli.js';
 
 // Load environment variables
 config();
@@ -57,7 +64,7 @@ const server = new Server(
   }
 );
 
-// Define tool schemas - keeping it simple with just mysql_query like the original
+// Define tool schemas
 const tools: Tool[] = [
   {
     name: 'mysql_query',
@@ -91,6 +98,131 @@ const tools: Tool[] = [
       },
     },
   },
+  {
+    name: 'wp_cli',
+    description: 'Execute a WP-CLI command on the Local WordPress site. Automatically handles the MySQL socket connection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: 'WP-CLI command to execute (without "wp" prefix). Example: "post list --post_type=page"',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'wp_post_create',
+    description: 'Create a new WordPress post or page',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        post_type: {
+          type: 'string',
+          description: 'Post type (post, page, or custom post type)',
+          default: 'post',
+        },
+        post_title: {
+          type: 'string',
+          description: 'Post title',
+        },
+        post_content: {
+          type: 'string',
+          description: 'Post content (supports Gutenberg blocks)',
+        },
+        post_status: {
+          type: 'string',
+          description: 'Post status (publish, draft, pending, private)',
+          default: 'publish',
+        },
+        post_name: {
+          type: 'string',
+          description: 'Post slug (URL-friendly name)',
+        },
+        post_parent: {
+          type: 'number',
+          description: 'Parent post ID (for hierarchical post types)',
+        },
+      },
+      required: ['post_title'],
+    },
+  },
+  {
+    name: 'wp_post_update',
+    description: 'Update an existing WordPress post or page',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        post_id: {
+          type: 'number',
+          description: 'ID of the post to update',
+        },
+        post_title: {
+          type: 'string',
+          description: 'New post title',
+        },
+        post_content: {
+          type: 'string',
+          description: 'New post content',
+        },
+        post_status: {
+          type: 'string',
+          description: 'New post status',
+        },
+        post_name: {
+          type: 'string',
+          description: 'New post slug',
+        },
+      },
+      required: ['post_id'],
+    },
+  },
+  {
+    name: 'wp_post_delete',
+    description: 'Delete a WordPress post or page',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        post_id: {
+          type: 'number',
+          description: 'ID of the post to delete',
+        },
+        force: {
+          type: 'boolean',
+          description: 'Skip trash and permanently delete',
+          default: false,
+        },
+      },
+      required: ['post_id'],
+    },
+  },
+  {
+    name: 'wp_menu_item_add',
+    description: 'Add an item to a WordPress navigation menu',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        menu: {
+          type: 'string',
+          description: 'Menu name or ID',
+        },
+        post_id: {
+          type: 'number',
+          description: 'Post/page ID to add to menu',
+        },
+        title: {
+          type: 'string',
+          description: 'Menu item title (optional, uses post title if not provided)',
+        },
+        parent_id: {
+          type: 'number',
+          description: 'Parent menu item ID for submenus',
+        },
+      },
+      required: ['menu', 'post_id'],
+    },
+  },
 ];
 
 // Handle list tools request
@@ -109,10 +241,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    await mysql.connect();
-
     switch (name) {
       case 'mysql_query': {
+        await mysql.connect();
         const sql = String(args.sql);
         const params = Array.isArray(args.params) ? args.params : undefined;
         debugLog('Executing mysql_query');
@@ -123,7 +254,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ],
         };
       }
+
       case 'mysql_schema': {
+        await mysql.connect();
         const table = args.table as string | undefined;
         if (!table) {
           const tables = await mysql.listTables();
@@ -140,6 +273,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify({ table, columns, indexes }, null, 2),
             },
           ],
+        };
+      }
+
+      case 'wp_cli': {
+        const command = String(args.command);
+        // Parse the command into parts
+        const parts = command.split(/\s+/);
+        const mainCmd = parts[0];
+        const cmdArgs = parts.slice(1);
+        debugLog('Executing wp_cli:', mainCmd, cmdArgs);
+        const output = executeWpCli(mainCmd, cmdArgs);
+        return {
+          content: [{ type: 'text', text: output }],
+        };
+      }
+
+      case 'wp_post_create': {
+        const postId = createPost({
+          post_type: args.post_type as string | undefined,
+          post_title: String(args.post_title),
+          post_content: args.post_content as string | undefined,
+          post_status: args.post_status as string | undefined,
+          post_name: args.post_name as string | undefined,
+          post_parent: args.post_parent as number | undefined,
+        });
+        return {
+          content: [{ type: 'text', text: `Success: Created post ${postId}` }],
+        };
+      }
+
+      case 'wp_post_update': {
+        const postId = Number(args.post_id);
+        updatePost(postId, {
+          post_title: args.post_title as string | undefined,
+          post_content: args.post_content as string | undefined,
+          post_status: args.post_status as string | undefined,
+          post_name: args.post_name as string | undefined,
+        });
+        return {
+          content: [{ type: 'text', text: `Success: Updated post ${postId}` }],
+        };
+      }
+
+      case 'wp_post_delete': {
+        const postId = Number(args.post_id);
+        const force = Boolean(args.force);
+        const output = deletePost(postId, force);
+        return {
+          content: [{ type: 'text', text: output }],
+        };
+      }
+
+      case 'wp_menu_item_add': {
+        const output = addMenuItem({
+          menu: String(args.menu),
+          post_id: Number(args.post_id),
+          title: args.title as string | undefined,
+          parent_id: args.parent_id as number | undefined,
+        });
+        return {
+          content: [{ type: 'text', text: output }],
         };
       }
 

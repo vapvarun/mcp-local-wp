@@ -186,3 +186,52 @@ export function getLocalMySQLConfig(database?: string): {
     timezone: 'Z',
   };
 }
+
+/**
+ * Gets the WordPress site root path from Local by Flywheel
+ */
+export function getLocalSitePath(): string {
+  const localInfo = findActiveLocalSocket();
+
+  // Socket path is like: /Users/.../Local/run/SITEID/mysql/mysqld.sock
+  // We need the site root which is in ~/Local Sites/
+  const siteId = localInfo.siteId;
+
+  // Local by Flywheel stores site data in ~/Local Sites/
+  const homeDir = process.env.HOME || '';
+  const localSitesDir = path.join(homeDir, 'Local Sites');
+
+  // Find the site directory that matches this siteId
+  if (fs.existsSync(localSitesDir)) {
+    const sites = fs.readdirSync(localSitesDir);
+    for (const site of sites) {
+      const sitePath = path.join(localSitesDir, site);
+      const siteJsonPath = path.join(sitePath, '.local-site.json');
+
+      if (fs.existsSync(siteJsonPath)) {
+        try {
+          const siteJson = JSON.parse(fs.readFileSync(siteJsonPath, 'utf8'));
+          if (siteJson.id === siteId) {
+            const wpPath = path.join(sitePath, 'app', 'public');
+            if (fs.existsSync(wpPath)) {
+              debugLog(`Found WordPress root: ${wpPath}`);
+              return wpPath;
+            }
+          }
+        } catch (e) {
+          // Skip invalid JSON files
+        }
+      }
+    }
+  }
+
+  throw new Error(`Could not find WordPress site root for site ID: ${siteId}`);
+}
+
+/**
+ * Gets the MySQL socket path for WP-CLI
+ */
+export function getLocalSocketPath(): string {
+  const localInfo = findActiveLocalSocket();
+  return localInfo.socketPath;
+}

@@ -132,6 +132,105 @@ Examples:
 }
 ```
 
+### wp_cli
+Execute any WP-CLI command on the Local WordPress site. Automatically handles the MySQL socket connection.
+
+Input fields:
+- `command` (string): WP-CLI command to execute (without "wp" prefix)
+
+**Example Usage:**
+```jsonc
+// List all posts
+{ "tool": "wp_cli", "args": { "command": "post list --post_type=page" } }
+
+// Get site info
+{ "tool": "wp_cli", "args": { "command": "option get blogname" } }
+
+// List plugins
+{ "tool": "wp_cli", "args": { "command": "plugin list" } }
+```
+
+### wp_post_create
+Create a new WordPress post or page.
+
+Input fields:
+- `post_title` (string, required): Post title
+- `post_type` (string): Post type (post, page, or custom). Default: "post"
+- `post_content` (string): Post content (supports Gutenberg blocks)
+- `post_status` (string): Status (publish, draft, pending, private). Default: "publish"
+- `post_name` (string): Post slug (URL-friendly name)
+- `post_parent` (number): Parent post ID (for hierarchical types)
+
+**Example:**
+```jsonc
+{
+  "tool": "wp_post_create",
+  "args": {
+    "post_type": "page",
+    "post_title": "About Us",
+    "post_content": "<!-- wp:paragraph --><p>Welcome to our site!</p><!-- /wp:paragraph -->",
+    "post_status": "publish",
+    "post_name": "about-us"
+  }
+}
+```
+
+### wp_post_update
+Update an existing WordPress post or page.
+
+Input fields:
+- `post_id` (number, required): ID of the post to update
+- `post_title` (string): New post title
+- `post_content` (string): New post content
+- `post_status` (string): New post status
+- `post_name` (string): New post slug
+
+**Example:**
+```jsonc
+{
+  "tool": "wp_post_update",
+  "args": {
+    "post_id": 123,
+    "post_title": "Updated Title",
+    "post_status": "draft"
+  }
+}
+```
+
+### wp_post_delete
+Delete a WordPress post or page.
+
+Input fields:
+- `post_id` (number, required): ID of the post to delete
+- `force` (boolean): Skip trash and permanently delete. Default: false
+
+**Example:**
+```jsonc
+{ "tool": "wp_post_delete", "args": { "post_id": 123, "force": true } }
+```
+
+### wp_menu_item_add
+Add an item to a WordPress navigation menu.
+
+Input fields:
+- `menu` (string, required): Menu name or ID
+- `post_id` (number, required): Post/page ID to add
+- `title` (string): Menu item title (uses post title if not provided)
+- `parent_id` (number): Parent menu item ID for submenus
+
+**Example:**
+```jsonc
+{
+  "tool": "wp_menu_item_add",
+  "args": {
+    "menu": "primary",
+    "post_id": 42,
+    "title": "Custom Title",
+    "parent_id": 15
+  }
+}
+```
+
 ## Installation
 
 ### Prerequisites
@@ -429,10 +528,12 @@ DEBUG=mcp-local-wp mcp-local-wp
 
 ## Security
 
-- **Read-only operations**: Only SELECT/SHOW/DESCRIBE/EXPLAIN are allowed
-- **Single statement**: Multiple statements in one call are blocked
+- **SQL Read-only**: Direct SQL queries are limited to SELECT/SHOW/DESCRIBE/EXPLAIN
+- **WP-CLI Access**: Write operations use WP-CLI which respects WordPress permissions
+- **Single statement**: Multiple SQL statements in one call are blocked
 - **Local development**: Designed for local environments (Local by Flywheel)
 - **No external connections**: Prioritizes Unix socket connections when available
+- **Safe execution**: Uses `execFileSync` instead of shell execution to prevent injection
 
 ## Contributing
 
