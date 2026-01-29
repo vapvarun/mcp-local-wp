@@ -59,5 +59,27 @@ export interface SiteSelectionResult {
     | 'env_site_name'
     | 'cwd_detection'
     | 'process_detection'
-    | 'filesystem_fallback';
+    | 'filesystem_fallback'
+    | 'runtime_switch'
+    | 'path_detection'
+    | 'wpcli_fallback';
+}
+
+/**
+ * Options for switching to a different site at runtime
+ */
+export interface SwitchSiteOptions {
+  siteName?: string;
+  siteId?: string;
+  sitePath?: string;
+}
+
+/**
+ * Result of a site switch operation
+ */
+export interface SwitchSiteResult {
+  success: boolean;
+  previousSite?: SiteSelectionResult;
+  newSite?: SiteSelectionResult;
+  error?: string;
 }

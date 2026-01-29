@@ -7,6 +7,8 @@ import type {
   LocalSiteEntry,
   LocalSitesConfig,
   SiteSelectionResult,
+  SwitchSiteOptions,
+  SwitchSiteResult,
 } from './types.js';
 
 function debugLog(...args: any[]) {
@@ -462,5 +464,174 @@ export function getLocalMySQLConfig(database?: string): {
     multipleStatements: false,
     timezone: 'Z',
     _siteSelection: selection,
+  };
+}
+
+/**
+ * Detects and returns site selection result for a given path
+ * This allows Claude to pass the user's CWD for correct site detection
+ */
+export function detectSiteFromPath(targetPath: string): SiteSelectionResult {
+  debugLog(`Detecting site from path: ${targetPath}`);
+
+  const site = findSiteByPath(targetPath);
+  if (!site) {
+    throw new Error(
+      `No Local site found containing path: ${targetPath}. ` +
+        `Make sure the path is within a Local site directory.`
+    );
+  }
+
+  const siteInfo = buildSiteInfoFromEntry(site);
+
+  return {
+    siteInfo,
+    siteName: site.name,
+    sitePath: normalizeSitePath(site.path),
+    domain: site.domain,
+    selectionMethod: 'path_detection',
+  };
+}
+
+/**
+ * Finds a site by ID from Local's sites.json
+ */
+export function findSiteById(siteId: string): (LocalSiteEntry & { id: string }) | undefined {
+  const sites = loadLocalSitesConfig();
+  const site = sites[siteId];
+  if (site) {
+    return { ...site, id: siteId } as LocalSiteEntry & { id: string };
+  }
+  return undefined;
+}
+
+/**
+ * Switch to a different site at runtime
+ * Accepts site_name, site_id, or site_path (in priority order)
+ * Returns the new site selection result
+ */
+export function switchToSite(
+  options: SwitchSiteOptions,
+  currentSite?: SiteSelectionResult
+): SwitchSiteResult {
+  const { siteName, siteId, sitePath } = options;
+
+  debugLog('switchToSite called with:', { siteName, siteId, sitePath });
+
+  // Validate at least one option is provided
+  if (!siteName && !siteId && !sitePath) {
+    return {
+      success: false,
+      previousSite: currentSite,
+      error: 'Must provide at least one of: site_name, site_id, or site_path',
+    };
+  }
+
+  try {
+    let site: (LocalSiteEntry & { id: string }) | undefined;
+    let selectionMethod: SiteSelectionResult['selectionMethod'] = 'runtime_switch';
+
+    // Priority 1: site_id
+    if (siteId) {
+      site = findSiteById(siteId);
+      if (!site) {
+        const sites = loadLocalSitesConfig();
+        const availableIds = Object.keys(sites).join(', ');
+        return {
+          success: false,
+          previousSite: currentSite,
+          error: `Site ID "${siteId}" not found. Available IDs: ${availableIds}`,
+        };
+      }
+    }
+
+    // Priority 2: site_name
+    if (!site && siteName) {
+      site = findSiteByName(siteName);
+      if (!site) {
+        const sites = loadLocalSitesConfig();
+        const availableNames = Object.values(sites)
+          .map((s) => s.name)
+          .join(', ');
+        return {
+          success: false,
+          previousSite: currentSite,
+          error: `Site name "${siteName}" not found. Available sites: ${availableNames}`,
+        };
+      }
+    }
+
+    // Priority 3: site_path
+    if (!site && sitePath) {
+      site = findSiteByPath(sitePath);
+      selectionMethod = 'path_detection';
+      if (!site) {
+        return {
+          success: false,
+          previousSite: currentSite,
+          error: `No Local site found containing path: ${sitePath}`,
+        };
+      }
+    }
+
+    if (!site) {
+      return {
+        success: false,
+        previousSite: currentSite,
+        error: 'Could not find site with provided options',
+      };
+    }
+
+    // Build site info (this will throw if site is not running)
+    const siteInfo = buildSiteInfoFromEntry(site);
+
+    const newSite: SiteSelectionResult = {
+      siteInfo,
+      siteName: site.name,
+      sitePath: normalizeSitePath(site.path),
+      domain: site.domain,
+      selectionMethod,
+    };
+
+    debugLog(`Switched to site: ${site.name} (${site.id})`);
+
+    return {
+      success: true,
+      previousSite: currentSite,
+      newSite,
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      previousSite: currentSite,
+      error: message,
+    };
+  }
+}
+
+/**
+ * Get MySQL connection config for a specific site selection
+ */
+export function getMySQLConfigForSite(
+  selection: SiteSelectionResult,
+  database?: string
+): {
+  host?: string;
+  port?: number;
+  user: string;
+  password: string;
+  database?: string;
+  socketPath?: string;
+  multipleStatements?: boolean;
+  timezone?: string;
+} {
+  return {
+    socketPath: selection.siteInfo.socketPath,
+    user: 'root',
+    password: 'root',
+    database: database || 'local',
+    multipleStatements: false,
+    timezone: 'Z',
   };
 }

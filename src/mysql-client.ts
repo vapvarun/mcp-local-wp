@@ -9,6 +9,30 @@ export class MySQLClient {
     this.config = config;
   }
 
+  /**
+   * Get the current connection configuration
+   */
+  getConfig(): MySQLConnectionConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Update the connection configuration (does not reconnect automatically)
+   */
+  updateConfig(newConfig: MySQLConnectionConfig): void {
+    this.config = newConfig;
+  }
+
+  /**
+   * Reconnect with a new configuration
+   * Closes existing connection and opens a new one with the provided config
+   */
+  async reconnect(newConfig: MySQLConnectionConfig): Promise<void> {
+    await this.disconnect();
+    this.config = newConfig;
+    await this.connect();
+  }
+
   async connect(): Promise<void> {
     if (this.connection) {
       return;

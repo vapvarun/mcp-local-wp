@@ -8,7 +8,13 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { config } from 'dotenv';
 import { MySQLClient } from './mysql-client.js';
-import { getLocalMySQLConfig, listAvailableSites } from './local-detector.js';
+import {
+  getLocalMySQLConfig,
+  listAvailableSites,
+  switchToSite,
+  detectSiteFromPath,
+  getMySQLConfigForSite,
+} from './local-detector.js';
 import type { SiteSelectionResult } from './types.js';
 
 // Load environment variables
@@ -126,6 +132,44 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'mysql_switch_site',
+    description:
+      'Switch to a different Local WordPress site by name, ID, or path. Use this when you need to connect to a different site without restarting the MCP server.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        site_name: {
+          type: 'string',
+          description: 'Site name (e.g., "meeting", "reign-learndash")',
+        },
+        site_id: {
+          type: 'string',
+          description: 'Site ID from Local (the UUID-like identifier)',
+        },
+        site_path: {
+          type: 'string',
+          description:
+            'Path to detect site from (e.g., "/Users/user/Local Sites/meeting/app/public")',
+        },
+      },
+    },
+  },
+  {
+    name: 'mysql_detect_from_path',
+    description:
+      'Detect and switch to the Local WordPress site that contains the given path. Use this to auto-detect the correct site based on the user\'s current working directory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to check (typically the user\'s CWD)',
+        },
+      },
+      required: ['path'],
     },
   },
 ];
@@ -286,6 +330,198 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   {
                     error: 'Failed to list sites',
                     message,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case 'mysql_switch_site': {
+        const siteName = args.site_name as string | undefined;
+        const siteId = args.site_id as string | undefined;
+        const sitePath = args.site_path as string | undefined;
+
+        debugLog('mysql_switch_site called:', { siteName, siteId, sitePath });
+
+        const result = switchToSite(
+          { siteName, siteId, sitePath },
+          currentSiteSelection
+        );
+
+        if (!result.success || !result.newSite) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: result.error,
+                    currentSite: currentSiteSelection
+                      ? {
+                          siteName: currentSiteSelection.siteName,
+                          siteId: currentSiteSelection.siteInfo.siteId,
+                        }
+                      : null,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        // Reconnect MySQL client with new site config
+        const newConfig = getMySQLConfigForSite(result.newSite, process.env.MYSQL_DB);
+        await mysql.reconnect(newConfig);
+
+        // Update current site selection
+        const previousSite = currentSiteSelection;
+        currentSiteSelection = result.newSite;
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  previousSite: previousSite
+                    ? {
+                        siteName: previousSite.siteName,
+                        siteId: previousSite.siteInfo.siteId,
+                        domain: previousSite.domain,
+                      }
+                    : null,
+                  newSite: {
+                    siteName: result.newSite.siteName,
+                    siteId: result.newSite.siteInfo.siteId,
+                    sitePath: result.newSite.sitePath,
+                    domain: result.newSite.domain,
+                    socketPath: result.newSite.siteInfo.socketPath,
+                    selectionMethod: result.newSite.selectionMethod,
+                  },
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'mysql_detect_from_path': {
+        const targetPath = args.path as string;
+
+        if (!targetPath) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: 'path parameter is required',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        debugLog('mysql_detect_from_path called:', { path: targetPath });
+
+        try {
+          const detected = detectSiteFromPath(targetPath);
+
+          // Check if we're already connected to this site
+          if (
+            currentSiteSelection &&
+            currentSiteSelection.siteInfo.siteId === detected.siteInfo.siteId
+          ) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      alreadyConnected: true,
+                      site: {
+                        siteName: detected.siteName,
+                        siteId: detected.siteInfo.siteId,
+                        sitePath: detected.sitePath,
+                        domain: detected.domain,
+                      },
+                      message: 'Already connected to the detected site',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
+          }
+
+          // Switch to the detected site
+          const newConfig = getMySQLConfigForSite(detected, process.env.MYSQL_DB);
+          await mysql.reconnect(newConfig);
+
+          const previousSite = currentSiteSelection;
+          currentSiteSelection = detected;
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    switched: true,
+                    previousSite: previousSite
+                      ? {
+                          siteName: previousSite.siteName,
+                          siteId: previousSite.siteInfo.siteId,
+                        }
+                      : null,
+                    newSite: {
+                      siteName: detected.siteName,
+                      siteId: detected.siteInfo.siteId,
+                      sitePath: detected.sitePath,
+                      domain: detected.domain,
+                      socketPath: detected.siteInfo.socketPath,
+                    },
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        } catch (detectError: unknown) {
+          const message =
+            detectError instanceof Error ? detectError.message : String(detectError);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: message,
+                    currentSite: currentSiteSelection
+                      ? {
+                          siteName: currentSiteSelection.siteName,
+                          siteId: currentSiteSelection.siteInfo.siteId,
+                        }
+                      : null,
                   },
                   null,
                   2
