@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* add `wp_cli` tool - run WP-CLI against the currently selected Local site, pinned to that site's MySQL socket so commands always hit the correct database. Fixes the trap where a bare `wp --path=<site>` run outside Local resolves DB_HOST=localhost to the wrong site (every Local site uses DB_NAME=local). Runs through Local's bundled PHP (no extension-mismatch noise). Makes the server write-ready for WordPress operations: plugin activate/deactivate, option update, post/user create, eval/eval-file, rewrite flush, etc.
+
 ## [1.1.0](https://github.com/verygoodplugins/mcp-local-wp/compare/v1.0.1...v1.1.0) (2026-01-04)
 
 

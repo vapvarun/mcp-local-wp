@@ -16,6 +16,7 @@ import {
   getMySQLConfigForSite,
 } from './local-detector.js';
 import type { SiteSelectionResult } from './types.js';
+import { runWpCli } from './wp-cli.js';
 
 // Load environment variables
 config();
@@ -172,6 +173,22 @@ const tools: Tool[] = [
       required: ['path'],
     },
   },
+  {
+    name: 'wp_cli',
+    description:
+      'Run a WP-CLI command against the CURRENTLY SELECTED Local site (use mysql_switch_site / mysql_detect_from_path to target a different site first). This is the write-ready path for WordPress operations: plugin activate/deactivate, option get/update, post/user create, eval, eval-file, rewrite flush, etc. It runs through Local\'s bundled PHP and pins the command to the site\'s own MySQL socket, so it always hits the correct database (a bare `wp --path=...` run outside Local resolves localhost to the wrong site, since every Local site uses DB_HOST=localhost + DB_NAME=local). Provide only the arguments after `wp`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description:
+            'The wp-cli arguments (everything after `wp`), e.g. "plugin activate jetonomy", "option get home", "option update show_on_front page", or "eval \'echo home_url();\'". Quote inner values as you would on a shell.',
+        },
+      },
+      required: ['command'],
+    },
+  },
 ];
 
 // Conditionally add mysql_write tool when writes are enabled
@@ -258,6 +275,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             { type: 'text', text: JSON.stringify(result, null, 2) },
           ],
+        };
+      }
+
+      case 'wp_cli': {
+        if (!currentSiteSelection) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  { ok: false, error: 'No Local site is currently selected. Use mysql_switch_site or mysql_detect_from_path first.' },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+        const command = String(args.command);
+        debugLog('Executing wp_cli:', command);
+        const result = await runWpCli(command, currentSiteSelection);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
       }
 
