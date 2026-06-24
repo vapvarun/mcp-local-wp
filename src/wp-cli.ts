@@ -63,6 +63,28 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Resolve the WordPress root (the --path) for a Local site.
+ *
+ * Note: LocalSiteInfo.configPath is the MySQL conf path, NOT wp-config.php — so
+ * derive the WP root from sitePath. Local sites are <root>/app/public; fall back
+ * to the site root, then the configPath dir, picking the first that actually
+ * contains wp-config.php.
+ */
+function resolveWpRoot(site: SiteSelectionResult): string {
+  const candidates = [
+    path.join(site.sitePath, 'app', 'public'),
+    site.sitePath,
+    path.dirname(site.siteInfo.configPath),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'wp-config.php'))) {
+      return candidate;
+    }
+  }
+  return path.join(site.sitePath, 'app', 'public');
+}
+
 export interface WpCliResult {
   ok: boolean;
   stdout: string;
@@ -92,8 +114,7 @@ export async function runWpCli(
   const php = resolveLocalPhp();
   const wp = resolveWpBin();
   const socket = site.siteInfo.socketPath;
-  // wp-config.php lives in the public dir; that is the --path WordPress root.
-  const publicPath = path.dirname(site.siteInfo.configPath);
+  const publicPath = resolveWpRoot(site);
 
   if (!fs.existsSync(socket)) {
     return {
